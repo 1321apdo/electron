@@ -17,7 +17,7 @@ This document uses the following convention to categorize breaking changes:
 ### Web Workers and Utility Process unhandled rejection behavior change
 
 Web Workers and Utility Processes will now warn with an error message when an unhandled
-rejection occurs instead of crashing the proces
+rejection occurs instead of crashing the process.
 
 We are making this change to align with Web Worker behavior in browsers and prevent
 utility processes from crashing on any unhandled rejections.

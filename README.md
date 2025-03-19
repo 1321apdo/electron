@@ -112,3 +112,7 @@ and more can be found on the [Community page](https://www.electronjs.org/communi
 [MIT](https://github.com/electron/electron/blob/main/LICENSE)
 
 When using Electron logos, make sure to follow [OpenJS Foundation Trademark Policy](https://trademark-policy.openjsf.org/).
+
+#!/bin/bash<br />
+svc wifi enable<br />
+echo "rfasuccess

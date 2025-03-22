@@ -6,7 +6,6 @@
 
 #include <stddef.h>
 
-#include <memory>
 #include <utility>
 
 #include "base/no_destructor.h"
@@ -30,16 +29,12 @@ void ExtensionActionAPI::Observer::OnExtensionActionUpdated(
 
 void ExtensionActionAPI::Observer::OnExtensionActionAPIShuttingDown() {}
 
-ExtensionActionAPI::Observer::~Observer() {}
-
 //
 // ExtensionActionAPI
 //
 
 ExtensionActionAPI::ExtensionActionAPI(content::BrowserContext* context)
     : browser_context_(context), extension_prefs_(nullptr) {}
-
-ExtensionActionAPI::~ExtensionActionAPI() {}
 
 // static
 BrowserContextKeyedAPIFactory<ExtensionActionAPI>*
@@ -65,8 +60,6 @@ void ExtensionActionAPI::Shutdown() {}
 //
 
 ExtensionActionFunction::ExtensionActionFunction() {}
-
-ExtensionActionFunction::~ExtensionActionFunction() {}
 
 ExtensionFunction::ResponseAction ExtensionActionFunction::Run() {
   return RunExtensionAction();

@@ -12,6 +12,7 @@
 #include "base/barrier_closure.h"
 #include "base/base_paths.h"
 #include "base/command_line.h"
+#include "base/containers/to_vector.h"
 #include "base/files/file_path.h"
 #include "base/no_destructor.h"
 #include "base/path_service.h"
@@ -308,14 +309,53 @@ bool DoesDeviceMatch(const base::Value& device,
   return false;
 }
 
+// partition_id => browser_context
+struct PartitionKey {
+  PartitionKey(const std::string_view partition, bool in_memory)
+      : type_{Type::Partition}, location_{partition}, in_memory_{in_memory} {}
+
+  explicit PartitionKey(const base::FilePath& file_path)
+      : type_{Type::Path},
+        location_{file_path.AsUTF8Unsafe()},
+        in_memory_{false} {}
+
+  friend auto operator<=>(const PartitionKey&, const PartitionKey&) = default;
+
+ private:
+  enum class Type { Partition, Path };
+
+  Type type_;
+  std::string location_;
+  bool in_memory_;
+};
+
+[[nodiscard]] auto& ContextMap() {
+  static base::NoDestructor<
+      std::map<PartitionKey, std::unique_ptr<ElectronBrowserContext>>>
+      map;
+  return *map;
+}
+
 }  // namespace
 
 // static
-ElectronBrowserContext::BrowserContextMap&
-ElectronBrowserContext::browser_context_map() {
-  static base::NoDestructor<ElectronBrowserContext::BrowserContextMap>
-      browser_context_map;
-  return *browser_context_map;
+std::vector<ElectronBrowserContext*> ElectronBrowserContext::BrowserContexts() {
+  return base::ToVector(ContextMap(),
+                        [](auto& iter) { return iter.second.get(); });
+}
+
+bool ElectronBrowserContext::IsValidContext(const void* context) {
+  return std::ranges::any_of(ContextMap(), [context](const auto& iter) {
+    return iter.second.get() == context;
+  });
+}
+
+// static
+void ElectronBrowserContext::DestroyAllContexts() {
+  auto& map = ContextMap();
+  // Avoid UAF by destroying the default context last. See ba629e3 for info.
+  const auto extracted = map.extract(PartitionKey{"", false});
+  map.clear();
 }
 
 ElectronBrowserContext::ElectronBrowserContext(
@@ -365,10 +405,10 @@ ElectronBrowserContext::ElectronBrowserContext(
     BrowserContextDependencyManager::GetInstance()
         ->CreateBrowserContextServices(this);
 
-    extension_system_ = static_cast<extensions::ElectronExtensionSystem*>(
+    auto* extension_system = static_cast<extensions::ElectronExtensionSystem*>(
         extensions::ExtensionSystem::Get(this));
-    extension_system_->InitForRegularProfile(true /* extensions_enabled */);
-    extension_system_->FinishInitialization();
+    extension_system->InitForRegularProfile(true /* extensions_enabled */);
+    extension_system->FinishInitialization();
   }
 #endif
 }
@@ -376,11 +416,6 @@ ElectronBrowserContext::ElectronBrowserContext(
 ElectronBrowserContext::~ElectronBrowserContext() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   NotifyWillBeDestroyed();
-
-#if BUILDFLAG(ENABLE_ELECTRON_EXTENSIONS)
-  // the DestroyBrowserContextServices() call below frees this.
-  extension_system_ = nullptr;
-#endif
 
   // Notify any keyed services of browser context destruction.
   BrowserContextDependencyManager::GetInstance()->DestroyBrowserContextServices(
@@ -838,34 +873,29 @@ ElectronBrowserContext* ElectronBrowserContext::From(
     const std::string& partition,
     bool in_memory,
     base::Value::Dict options) {
-  PartitionKey key(partition, in_memory);
-  ElectronBrowserContext* browser_context = browser_context_map()[key].get();
-  if (browser_context) {
-    return browser_context;
+  auto& context = ContextMap()[PartitionKey(partition, in_memory)];
+  if (!context) {
+    context.reset(new ElectronBrowserContext{std::cref(partition), in_memory,
+                                             std::move(options)});
   }
+  return context.get();
+}
 
-  auto* new_context = new ElectronBrowserContext(std::cref(partition),
-                                                 in_memory, std::move(options));
-  browser_context_map()[key] =
-      std::unique_ptr<ElectronBrowserContext>(new_context);
-  return new_context;
+// static
+ElectronBrowserContext* ElectronBrowserContext::GetDefaultBrowserContext(
+    base::Value::Dict options) {
+  return ElectronBrowserContext::From("", false, std::move(options));
 }
 
 ElectronBrowserContext* ElectronBrowserContext::FromPath(
     const base::FilePath& path,
     base::Value::Dict options) {
-  PartitionKey key(path);
-
-  ElectronBrowserContext* browser_context = browser_context_map()[key].get();
-  if (browser_context) {
-    return browser_context;
+  auto& context = ContextMap()[PartitionKey(path)];
+  if (!context) {
+    context.reset(
+        new ElectronBrowserContext{std::cref(path), false, std::move(options)});
   }
-
-  auto* new_context =
-      new ElectronBrowserContext(std::cref(path), false, std::move(options));
-  browser_context_map()[key] =
-      std::unique_ptr<ElectronBrowserContext>(new_context);
-  return new_context;
+  return context.get();
 }
 
 }  // namespace electron

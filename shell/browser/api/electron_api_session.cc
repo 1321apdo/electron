@@ -553,7 +553,9 @@ Session::Session(v8::Isolate* isolate, ElectronBrowserContext* browser_context)
 
   SessionPreferences::CreateForBrowserContext(browser_context);
 
-  protocol_.Reset(isolate, Protocol::Create(isolate, browser_context).ToV8());
+  protocol_.Reset(
+      isolate,
+      Protocol::Create(isolate, browser_context->protocol_registry()).ToV8());
 
   browser_context->SetUserData(
       kElectronApiSessionKey,
@@ -701,14 +703,13 @@ v8::Local<v8::Promise> Session::ClearStorageData(gin::Arguments* args) {
   ClearStorageDataOptions options;
   args->GetNext(&options);
 
-  auto* storage_partition = browser_context()->GetStoragePartition(nullptr);
   if (options.storage_types & StoragePartition::REMOVE_DATA_MASK_COOKIES) {
     // Reset media device id salt when cookies are cleared.
     // https://w3c.github.io/mediacapture-main/#dom-mediadeviceinfo-deviceid
     MediaDeviceIDSalt::Reset(browser_context()->prefs());
   }
 
-  storage_partition->ClearData(
+  browser_context()->GetDefaultStoragePartition()->ClearData(
       options.storage_types, options.quota_types, options.storage_key,
       base::Time(), base::Time::Max(),
       base::BindOnce(gin_helper::Promise<void>::ResolvePromise,
@@ -717,8 +718,7 @@ v8::Local<v8::Promise> Session::ClearStorageData(gin::Arguments* args) {
 }
 
 void Session::FlushStorageData() {
-  auto* storage_partition = browser_context()->GetStoragePartition(nullptr);
-  storage_partition->Flush();
+  browser_context()->GetDefaultStoragePartition()->Flush();
 }
 
 v8::Local<v8::Promise> Session::SetProxy(gin::Arguments* args) {
@@ -1067,9 +1067,9 @@ std::string Session::RegisterPreloadScript(
                          });
 
   if (it != preload_scripts.end()) {
-    thrower.ThrowError(base::StringPrintf(
-        "Cannot register preload script with existing ID '%s'",
-        new_preload_script.id.c_str()));
+    thrower.ThrowError(
+        absl::StrFormat("Cannot register preload script with existing ID '%s'",
+                        new_preload_script.id));
     return "";
   }
 
@@ -1080,8 +1080,8 @@ std::string Session::RegisterPreloadScript(
                  << new_preload_script.file_path;
     } else {
       thrower.ThrowError(
-          base::StringPrintf("Preload script must have absolute path: %s",
-                             new_preload_script.file_path.value().c_str()));
+          absl::StrFormat("Preload script must have absolute path: %s",
+                          new_preload_script.file_path.value()));
       return "";
     }
   }
@@ -1110,9 +1110,8 @@ void Session::UnregisterPreloadScript(gin_helper::ErrorThrower thrower,
   }
 
   // If the script is not found, throw an error
-  thrower.ThrowError(base::StringPrintf(
-      "Cannot unregister preload script with non-existing ID '%s'",
-      script_id.c_str()));
+  thrower.ThrowError(absl::StrFormat(
+      "Cannot unregister preload script with non-existing ID '%s'", script_id));
 }
 
 std::vector<PreloadScript> Session::GetPreloadScripts() const {
@@ -1682,7 +1681,7 @@ gin::Handle<Session> Session::FromPartition(v8::Isolate* isolate,
   ElectronBrowserContext* browser_context;
   if (partition.empty()) {
     browser_context =
-        ElectronBrowserContext::From("", false, std::move(options));
+        ElectronBrowserContext::GetDefaultBrowserContext(std::move(options));
   } else if (partition.starts_with(kPersistPrefix)) {
     std::string name = partition.substr(8);
     browser_context =
